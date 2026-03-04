@@ -294,6 +294,7 @@ fn print_help() {
          - pwd                        # print current directory\n\
          - dircreate <path...>        # dircreate srotas users\n\
          - dirlist [path...]          # dirlist ; dirlist srotas\n\
+         - ls [path...]               # alias for dirlist\n\
          - rmdir <path...>            # remove directory and its contents\n\
          \n\
          # Tuple / key helpers\n\
@@ -443,7 +444,7 @@ async fn execute_command(
             }
         }
 
-        "dirlist" => {
+        "dirlist" | "ls" => {
             let trx = db.create_trx()?;
             let resolved = resolve_path(current_dir, args);
             let path: Vec<&str> = resolved.iter().map(|s| s.as_str()).collect();
