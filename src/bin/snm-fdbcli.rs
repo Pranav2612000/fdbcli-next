@@ -287,6 +287,10 @@ fn print_help() {
          - dump-all\n\
          \n\
          # Directory layer (dynamic)\n\
+         - cd <path...>               # change current directory\n\
+         - cd ..                      # go up one directory\n\
+         - cd /                       # go to root directory\n\
+         - pwd                        # print current directory\n\
          - dircreate <path...>        # dircreate srotas users\n\
          - dirlist [path...]          # dirlist ; dirlist srotas\n\
          \n\
@@ -310,9 +314,73 @@ fn print_help() {
     );
 }
 
+/// Resolve a path relative to the current directory
+/// If args is empty, returns current_dir
+/// If args contains "..", goes up one level
+/// Otherwise, appends args to current_dir
+fn resolve_path(current_dir: &[String], args: &[&str]) -> Vec<String> {
+    if args.is_empty() {
+        return current_dir.to_vec();
+    }
+
+    let mut result = current_dir.to_vec();
+
+    for arg in args {
+        if *arg == ".." {
+            result.pop();
+        } else if *arg == "/" {
+            result.clear();
+        } else {
+            result.push(arg.to_string());
+        }
+    }
+
+    result
+}
+
 /// Execute a single REPL command
-async fn execute_command(db: &Database, cmd: &str, args: &[&str]) -> FdbResult<()> {
+async fn execute_command(
+    db: &Database,
+    cmd: &str,
+    args: &[&str],
+    current_dir: &mut Vec<String>,
+) -> FdbResult<()> {
     match cmd {
+        // ------------- Directory navigation -------------
+        "cd" => {
+            let new_dir = resolve_path(current_dir, args);
+
+            // Root directory (empty path) always exists, no need to verify
+            if new_dir.is_empty() {
+                *current_dir = new_dir;
+                println!("Changed to: /");
+                return Ok(());
+            }
+
+            // Verify the directory exists by trying to open it
+            let trx = db.create_trx()?;
+            let path_refs: Vec<&str> = new_dir.iter().map(|s| s.as_str()).collect();
+            match dir_open(&trx, &path_refs).await {
+                Ok(_) => {
+                    *current_dir = new_dir;
+                    println!("Changed to: /{}", current_dir.join("/"));
+                }
+                Err(e) => {
+                    println!("Error: Directory not found: {:?}", e);
+                }
+            }
+            Ok(())
+        }
+
+        "pwd" => {
+            if current_dir.is_empty() {
+                println!("/");
+            } else {
+                println!("/{}", current_dir.join("/"));
+            }
+            Ok(())
+        }
+
         // ------------- Srotas helpers -------------
         "init" => cmd_init(db).await,
         "seed" => {
@@ -360,11 +428,12 @@ async fn execute_command(db: &Database, cmd: &str, args: &[&str]) -> FdbResult<(
                 Ok(())
             } else {
                 let trx = db.create_trx()?;
-                let path: Vec<&str> = args.to_vec();
+                let resolved = resolve_path(current_dir, args);
+                let path: Vec<&str> = resolved.iter().map(|s| s.as_str()).collect();
                 match dir_create(&trx, &path).await {
                     Ok(_) => {
                         trx.commit().await?;
-                        println!("✓ Directory created: {:?}", path);
+                        println!("✓ Directory created: /{}", resolved.join("/"));
                     }
                     Err(e) => println!("Error: {:?}", e),
                 }
@@ -374,13 +443,14 @@ async fn execute_command(db: &Database, cmd: &str, args: &[&str]) -> FdbResult<(
 
         "dirlist" => {
             let trx = db.create_trx()?;
-            let path: Vec<&str> = args.to_vec();
+            let resolved = resolve_path(current_dir, args);
+            let path: Vec<&str> = resolved.iter().map(|s| s.as_str()).collect();
             match dir_list(&trx, &path).await {
                 Ok(children) => {
-                    if path.is_empty() {
+                    if resolved.is_empty() {
                         println!("Root directories:");
                     } else {
-                        println!("Directories under {:?}:", path);
+                        println!("Directories under /{}:", resolved.join("/"));
                     }
                     if children.is_empty() {
                         println!("  (none)");
@@ -427,19 +497,20 @@ async fn execute_command(db: &Database, cmd: &str, args: &[&str]) -> FdbResult<(
 
         // ------------- Tuple prefix range / delete -------------
         "clearprefix" => {
-            if args.len() < 2 {
-                println!("Usage: clearprefix <path...> (tuple)");
+            if args.is_empty() {
+                println!("Usage: clearprefix [path...] (tuple)");
                 Ok(())
             } else {
                 let (path_args, tuple_arg) = args.split_at(args.len() - 1);
                 let tuple_str = tuple_arg[0].to_string();
-                let path: Vec<&str> = path_args.to_vec();
+                let resolved = resolve_path(current_dir, path_args);
+                let path: Vec<&str> = resolved.iter().map(|s| s.as_str()).collect();
 
                 let trx = db.create_trx()?;
                 let dir = match dir_open(&trx, &path).await {
                     Ok(d) => d,
                     Err(e) => {
-                        println!("Error opening dir {:?}: {:?}", path, e);
+                        println!("Error opening dir /{}: {:?}", resolved.join("/"), e);
                         return Ok(());
                     }
                 };
@@ -452,26 +523,27 @@ async fn execute_command(db: &Database, cmd: &str, args: &[&str]) -> FdbResult<(
                 };
                 trx.clear_range(&begin, &end);
                 trx.commit().await?;
-                println!("✓ Cleared prefix {:?} in {:?}", tuple_str, path);
+                println!("✓ Cleared prefix {:?} in /{}", tuple_str, resolved.join("/"));
 
                 Ok(())
             }
         }
 
         "range" => {
-            if args.len() < 2 {
-                println!("Usage: range <path...> (tuple)");
+            if args.is_empty() {
+                println!("Usage: range [path...] (tuple)");
                 Ok(())
             } else {
                 let (path_args, tuple_arg) = args.split_at(args.len() - 1);
                 let tuple_str = tuple_arg[0].to_string();
-                let path: Vec<&str> = path_args.to_vec();
+                let resolved = resolve_path(current_dir, path_args);
+                let path: Vec<&str> = resolved.iter().map(|s| s.as_str()).collect();
 
                 let trx = db.create_trx()?;
                 let dir = match dir_open(&trx, &path).await {
                     Ok(d) => d,
                     Err(e) => {
-                        println!("Error opening dir {:?}: {:?}", path, e);
+                        println!("Error opening dir /{}: {:?}", resolved.join("/"), e);
                         return Ok(());
                     }
                 };
@@ -485,7 +557,7 @@ async fn execute_command(db: &Database, cmd: &str, args: &[&str]) -> FdbResult<(
                 let range = RangeOption::from((begin.as_slice(), end.as_slice()));
                 let kvs = trx.get_range(&range, 10_000, false).await?;
 
-                println!("Range {:?} in {:?}:", tuple_str, path);
+                println!("Range {:?} in /{}:", tuple_str, resolved.join("/"));
                 if kvs.is_empty() {
                     println!("  (no keys)");
                 } else {
@@ -502,19 +574,20 @@ async fn execute_command(db: &Database, cmd: &str, args: &[&str]) -> FdbResult<(
         }
 
         "delkey" => {
-            if args.len() < 2 {
-                println!("Usage: delkey <path...> (tuple)");
+            if args.is_empty() {
+                println!("Usage: delkey [path...] (tuple)");
                 Ok(())
             } else {
                 let (path_args, tuple_arg) = args.split_at(args.len() - 1);
                 let tuple_str = tuple_arg[0].to_string();
-                let path: Vec<&str> = path_args.to_vec();
+                let resolved = resolve_path(current_dir, path_args);
+                let path: Vec<&str> = resolved.iter().map(|s| s.as_str()).collect();
 
                 let trx = db.create_trx()?;
                 let dir = match dir_open(&trx, &path).await {
                     Ok(d) => d,
                     Err(e) => {
-                        println!("Error opening dir {:?}: {:?}", path, e);
+                        println!("Error opening dir /{}: {:?}", resolved.join("/"), e);
                         return Ok(());
                     }
                 };
@@ -527,7 +600,7 @@ async fn execute_command(db: &Database, cmd: &str, args: &[&str]) -> FdbResult<(
                 };
                 trx.clear(&key);
                 trx.commit().await?;
-                println!("✓ Deleted key {:?} in {:?}", tuple_str, path);
+                println!("✓ Deleted key {:?} in /{}", tuple_str, resolved.join("/"));
 
                 Ok(())
             }
@@ -561,9 +634,19 @@ async fn cmd_repl(db: &Database) -> FdbResult<()> {
     println!("Type 'help' for commands, 'quit' or 'exit' to leave.");
     println!("Command history: Use UP/DOWN arrows to navigate.\n");
 
+    // Track current directory
+    let mut current_dir: Vec<String> = Vec::new();
+
     loop {
+        // Build prompt showing current directory
+        let prompt = if current_dir.is_empty() {
+            "snm-fdbcli /> ".to_string()
+        } else {
+            format!("snm-fdbcli /{}> ", current_dir.join("/"))
+        };
+
         // Read line with rustyline (provides history, editing, etc.)
-        let readline = rl.readline("snm-fdbcli> ");
+        let readline = rl.readline(&prompt);
 
         match readline {
             Ok(line) => {
@@ -599,7 +682,7 @@ async fn cmd_repl(db: &Database) -> FdbResult<()> {
                 let cmd = parts[0];
                 let args = &parts[1..];
 
-                let result = execute_command(db, cmd, args).await;
+                let result = execute_command(db, cmd, args, &mut current_dir).await;
 
                 if let Err(e) = result {
                     eprintln!("Error: {:?}", e);
@@ -635,8 +718,18 @@ async fn cmd_repl_basic(db: &Database) -> FdbResult<()> {
     println!("snm-fdbcli interactive shell (basic mode)");
     println!("Type 'help' for commands, 'quit' or 'exit' to leave.\n");
 
+    // Track current directory
+    let mut current_dir: Vec<String> = Vec::new();
+
     loop {
-        print!("snm-fdbcli> ");
+        // Build prompt showing current directory
+        let prompt = if current_dir.is_empty() {
+            "snm-fdbcli /> ".to_string()
+        } else {
+            format!("snm-fdbcli /{}> ", current_dir.join("/"))
+        };
+
+        print!("{}", prompt);
         io::stdout().flush().unwrap();
 
         let mut line = String::new();
@@ -667,7 +760,7 @@ async fn cmd_repl_basic(db: &Database) -> FdbResult<()> {
         let cmd = parts[0];
         let args = &parts[1..];
 
-        let result = execute_command(db, cmd, args).await;
+        let result = execute_command(db, cmd, args, &mut current_dir).await;
 
         if let Err(e) = result {
             eprintln!("Error: {:?}", e);
