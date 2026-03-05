@@ -268,6 +268,7 @@ fn print_help() {
          - dirlist [path...]          # dirlist ; dirlist srotas\n\
          - ls [path...]               # alias for dirlist\n\
          - rmdir <path...>            # remove directory and its contents\n\
+                                      # supports wildcard: rmdir test*\n\
          \n\
          # Tuple / key helpers\n\
          - keypack (value)            # prints hex\n\
@@ -311,6 +312,58 @@ fn resolve_path(current_dir: &[String], args: &[&str]) -> Vec<String> {
     }
 
     result
+}
+
+/// Match a string against a pattern with wildcards (*)
+/// Examples:
+///   match_pattern("test123", "test*") => true
+///   match_pattern("test123", "*123") => true
+///   match_pattern("test123", "test*123") => true
+///   match_pattern("hello", "test*") => false
+fn match_pattern(text: &str, pattern: &str) -> bool {
+    // If no wildcard, just do exact match
+    if !pattern.contains('*') {
+        return text == pattern;
+    }
+
+    // Split pattern by '*' to get parts that must match
+    let parts: Vec<&str> = pattern.split('*').collect();
+
+    // Empty pattern or just "*" matches everything
+    if parts.len() == 1 && parts[0].is_empty() {
+        return true;
+    }
+
+    let mut text_pos = 0;
+
+    for (i, part) in parts.iter().enumerate() {
+        if part.is_empty() {
+            continue;
+        }
+
+        // First part must match at the start
+        if i == 0 {
+            if !text.starts_with(part) {
+                return false;
+            }
+            text_pos = part.len();
+            continue;
+        }
+
+        // Last part must match at the end
+        if i == parts.len() - 1 {
+            return text.ends_with(part) && text.len() >= text_pos + part.len();
+        }
+
+        // Middle parts must exist somewhere after current position
+        if let Some(pos) = text[text_pos..].find(part) {
+            text_pos += pos + part.len();
+        } else {
+            return false;
+        }
+    }
+
+    true
 }
 
 /// Execute a single REPL command
@@ -453,30 +506,107 @@ async fn execute_command(
                     return Ok(());
                 }
 
-                // Check if trying to remove current directory or a parent
-                let current_path_str = current_dir.join("/");
-                let resolved_path_str = resolved.join("/");
-                if !current_path_str.is_empty()
-                    && (current_path_str == resolved_path_str
-                        || current_path_str.starts_with(&format!("{}/", resolved_path_str)))
-                {
-                    println!(
-                        "Warning: Removing current directory or its parent. Returning to root."
-                    );
-                    current_dir.clear();
-                }
+                // Check if the last path component contains a wildcard
+                let last_component = resolved.last().unwrap();
+                let contains_wildcard = last_component.contains('*');
 
-                let trx = db.create_trx()?;
-                let path: Vec<&str> = resolved.iter().map(|s| s.as_str()).collect();
-                match dir_remove(&trx, &path).await {
-                    Ok(true) => {
-                        trx.commit().await?;
-                        println!("✓ Directory removed: /{}", resolved.join("/"));
+                if contains_wildcard {
+                    // Wildcard pattern matching
+                    let pattern = last_component.clone();
+                    let parent_path: Vec<String> = resolved[..resolved.len() - 1].to_vec();
+
+                    // List directories at parent level
+                    let trx = db.create_trx()?;
+                    let parent_path_refs: Vec<&str> =
+                        parent_path.iter().map(|s| s.as_str()).collect();
+
+                    match dir_list(&trx, &parent_path_refs).await {
+                        Ok(children) => {
+                            // Filter directories that match the pattern
+                            let matching: Vec<String> = children
+                                .iter()
+                                .filter(|name| match_pattern(name, &pattern))
+                                .cloned()
+                                .collect();
+
+                            if matching.is_empty() {
+                                println!("No directories matching pattern: {}", pattern);
+                                return Ok(());
+                            }
+
+                            // Remove each matching directory
+                            let mut removed_count = 0;
+                            for dir_name in &matching {
+                                let mut full_path = parent_path.clone();
+                                full_path.push(dir_name.clone());
+
+                                // Check if trying to remove current directory or a parent
+                                let current_path_str = current_dir.join("/");
+                                let full_path_str = full_path.join("/");
+                                if !current_path_str.is_empty()
+                                    && (current_path_str == full_path_str
+                                        || current_path_str
+                                            .starts_with(&format!("{}/", full_path_str)))
+                                {
+                                    println!(
+                                        "Warning: Removing current directory or its parent. Returning to root."
+                                    );
+                                    current_dir.clear();
+                                }
+
+                                let path_refs: Vec<&str> =
+                                    full_path.iter().map(|s| s.as_str()).collect();
+                                match dir_remove(&trx, &path_refs).await {
+                                    Ok(true) => {
+                                        removed_count += 1;
+                                        println!("✓ Directory removed: /{}", full_path.join("/"));
+                                    }
+                                    Ok(false) => {
+                                        println!("Directory not found: /{}", full_path.join("/"));
+                                    }
+                                    Err(e) => println!("Error removing {}: {:?}", dir_name, e),
+                                }
+                            }
+
+                            trx.commit().await?;
+                            println!(
+                                "✓ Removed {} director{} matching pattern: {}",
+                                removed_count,
+                                if removed_count == 1 { "y" } else { "ies" },
+                                pattern
+                            );
+                        }
+                        Err(e) => {
+                            println!("Error listing directories: {:?}", e);
+                        }
                     }
-                    Ok(false) => {
-                        println!("Directory not found: /{}", resolved.join("/"));
+                } else {
+                    // No wildcard - original behavior
+                    // Check if trying to remove current directory or a parent
+                    let current_path_str = current_dir.join("/");
+                    let resolved_path_str = resolved.join("/");
+                    if !current_path_str.is_empty()
+                        && (current_path_str == resolved_path_str
+                            || current_path_str.starts_with(&format!("{}/", resolved_path_str)))
+                    {
+                        println!(
+                            "Warning: Removing current directory or its parent. Returning to root."
+                        );
+                        current_dir.clear();
                     }
-                    Err(e) => println!("Error: {:?}", e),
+
+                    let trx = db.create_trx()?;
+                    let path: Vec<&str> = resolved.iter().map(|s| s.as_str()).collect();
+                    match dir_remove(&trx, &path).await {
+                        Ok(true) => {
+                            trx.commit().await?;
+                            println!("✓ Directory removed: /{}", resolved.join("/"));
+                        }
+                        Ok(false) => {
+                            println!("Directory not found: /{}", resolved.join("/"));
+                        }
+                        Err(e) => println!("Error: {:?}", e),
+                    }
                 }
                 Ok(())
             }
