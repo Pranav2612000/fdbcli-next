@@ -1,15 +1,15 @@
-use foundationdb::{Database, FdbResult, RangeOption, Transaction};
-use foundationdb::directory::{DirectoryLayer, Directory, DirectoryOutput, DirectoryError};
+use foundationdb::directory::{Directory, DirectoryError, DirectoryLayer, DirectoryOutput};
 use foundationdb::tuple::{pack, unpack};
+use foundationdb::{Database, FdbResult, RangeOption, Transaction};
 use std::env;
 
-pub const ENV_DB_PATH: &str = "SNM_FDBCLI_DB_PATH";
+pub const ENV_DB_PATH: &str = "FDBCLI_DB_PATH";
 
 /// Connect to FDB using env var or default cluster file.
 ///
-/// - If `SNM_FDBCLI_DB_PATH` is set, it's treated as a *cluster file path*.
+/// - If `FDBCLI_DB_PATH` is set, it's treated as a *cluster file path*.
 ///   Example:
-///     export SNM_FDBCLI_DB_PATH=/usr/local/etc/foundationdb/fdb.cluster
+///     export FDBCLI_DB_PATH=/usr/local/etc/foundationdb/fdb.cluster
 ///
 /// - Otherwise `Database::default()` is used.
 pub fn connect_db() -> FdbResult<Database> {
@@ -33,9 +33,9 @@ pub async fn create_spaces(
 ) {
     let dir_layer = DirectoryLayer::default();
 
-    let users_path   = vec!["srotas".to_string(), "users".to_string()];
-    let logins_path  = vec!["srotas".to_string(), "logins".to_string()];
-    let orders_path  = vec!["srotas".to_string(), "orders".to_string()];
+    let users_path = vec!["srotas".to_string(), "users".to_string()];
+    let logins_path = vec!["srotas".to_string(), "logins".to_string()];
+    let orders_path = vec!["srotas".to_string(), "orders".to_string()];
     let wallets_path = vec!["srotas".to_string(), "wallets".to_string()];
 
     let users_dir = dir_layer
@@ -72,9 +72,9 @@ pub async fn open_spaces(
 ) {
     let dir_layer = DirectoryLayer::default();
 
-    let users_path   = vec!["srotas".to_string(), "users".to_string()];
-    let logins_path  = vec!["srotas".to_string(), "logins".to_string()];
-    let orders_path  = vec!["srotas".to_string(), "orders".to_string()];
+    let users_path = vec!["srotas".to_string(), "users".to_string()];
+    let logins_path = vec!["srotas".to_string(), "logins".to_string()];
+    let orders_path = vec!["srotas".to_string(), "orders".to_string()];
     let wallets_path = vec!["srotas".to_string(), "wallets".to_string()];
 
     let users_dir = dir_layer
@@ -98,13 +98,8 @@ pub async fn open_spaces(
 }
 
 /// Build a prefix range for "all keys starting with this user's id" in a subspace.
-pub fn prefix_range_for_user(
-    dir: &DirectoryOutput,
-    user_id: &str,
-) -> (Vec<u8>, Vec<u8>) {
-    let prefix = dir
-        .pack(&(user_id,))
-        .expect("pack user prefix");
+pub fn prefix_range_for_user(dir: &DirectoryOutput, user_id: &str) -> (Vec<u8>, Vec<u8>) {
+    let prefix = dir.pack(&(user_id,)).expect("pack user prefix");
     let mut end = prefix.clone();
     end.push(0xFF); // simple prefix upper-bound
 
@@ -112,11 +107,7 @@ pub fn prefix_range_for_user(
 }
 
 /// Dump an entire directory (bounded by `limit`).
-pub async fn dump_dir(
-    trx: &Transaction,
-    dir: &DirectoryOutput,
-    limit: i32,
-) -> FdbResult<()> {
+pub async fn dump_dir(trx: &Transaction, dir: &DirectoryOutput, limit: i32) -> FdbResult<()> {
     let (begin, end) = dir.range().expect("dir.range()");
     let range = RangeOption::from((begin.as_slice(), end.as_slice()));
     let kvs = trx
@@ -154,10 +145,7 @@ pub async fn dir_create(
 }
 
 /// Generic: open existing directory; `path` may be empty for root dir layer.
-pub async fn dir_open(
-    trx: &Transaction,
-    path: &[&str],
-) -> Result<DirectoryOutput, DirectoryError> {
+pub async fn dir_open(trx: &Transaction, path: &[&str]) -> Result<DirectoryOutput, DirectoryError> {
     let layer = DirectoryLayer::default();
     let vec_path: Vec<String> = path.iter().map(|s| s.to_string()).collect();
     let out = layer.open(trx, &vec_path, None).await?;
@@ -165,10 +153,7 @@ pub async fn dir_open(
 }
 
 /// List child directories under `path` (or root if `path` is empty).
-pub async fn dir_list(
-    trx: &Transaction,
-    path: &[&str],
-) -> Result<Vec<String>, DirectoryError> {
+pub async fn dir_list(trx: &Transaction, path: &[&str]) -> Result<Vec<String>, DirectoryError> {
     let layer = DirectoryLayer::default();
     let vec_path: Vec<String> = path.iter().map(|s| s.to_string()).collect();
     let children = layer.list(trx, &vec_path).await?;
@@ -177,10 +162,7 @@ pub async fn dir_list(
 
 /// Remove a directory at the given path.
 /// This will recursively remove all subdirectories and keys within the directory.
-pub async fn dir_remove(
-    trx: &Transaction,
-    path: &[&str],
-) -> Result<bool, DirectoryError> {
+pub async fn dir_remove(trx: &Transaction, path: &[&str]) -> Result<bool, DirectoryError> {
     let layer = DirectoryLayer::default();
     let vec_path: Vec<String> = path.iter().map(|s| s.to_string()).collect();
     let removed = layer.remove(trx, &vec_path).await?;
@@ -218,10 +200,7 @@ pub fn tuple_prefix_range(
 }
 
 /// Build a *single key* from a tuple string, e.g. "(user-1)".
-pub fn tuple_key_from_string(
-    dir: &DirectoryOutput,
-    tuple_str: &str,
-) -> Result<Vec<u8>, String> {
+pub fn tuple_key_from_string(dir: &DirectoryOutput, tuple_str: &str) -> Result<Vec<u8>, String> {
     let v = parse_simple_tuple_str(tuple_str)?;
     let key = dir
         .pack(&(v.as_str(),))
@@ -239,17 +218,9 @@ pub fn tuple_pack_from_string(tuple_str: &str) -> Result<Vec<u8>, String> {
 
 /// Unpack raw bytes into a simple tuple string like "(value)".
 pub fn tuple_unpack_to_string(bytes: &[u8]) -> Result<String, String> {
-    let t: (String,) =
-        unpack(bytes).map_err(|e| format!("unpack error: {:?}", e))?;
+    let t: (String,) = unpack(bytes).map_err(|e| format!("unpack error: {:?}", e))?;
     Ok(format!("({})", t.0))
 }
-
-
-
-
-
-
-
 
 // =====================================================================
 // Tests
@@ -313,9 +284,7 @@ mod tests {
 
         {
             let trx2 = db.create_trx().expect("create_trx 2");
-            let children = dir_list(&trx2, &["test-root"])
-                .await
-                .expect("dir_list");
+            let children = dir_list(&trx2, &["test-root"]).await.expect("dir_list");
             assert!(
                 children.contains(&"sub".to_string()),
                 "expected 'sub' in children: {:?}",
@@ -333,8 +302,7 @@ mod tests {
                 .await
                 .expect("dir_open for prefix test");
 
-            let (begin, end) = tuple_prefix_range(&dir, "(alice)")
-                .expect("tuple_prefix_range");
+            let (begin, end) = tuple_prefix_range(&dir, "(alice)").expect("tuple_prefix_range");
             assert!(!begin.is_empty(), "begin should not be empty");
             assert!(begin.len() < end.len(), "end should be longer than begin");
             assert_eq!(end.last().copied(), Some(0xFF), "end should end with 0xFF");

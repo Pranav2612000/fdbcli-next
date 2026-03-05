@@ -1,14 +1,7 @@
-# 📦 snm-fdbcli  
-### A Modern Interactive CLI & Library for FoundationDB (Directory + Tuple Layer)
+# 📦 fdbcli-next
+### Next version fdbcli
 
-[![Crates.io](https://img.shields.io/crates/v/snm-fdbcli)](https://crates.io/crates/snm-fdbcli)
-[![Documentation](https://docs.rs/snm-fdbcli/badge.svg)](https://docs.rs/snm-fdbcli)
-[![License](https://img.shields.io/crates/l/snm-fdbcli)](LICENSE)
-[![Downloads](https://img.shields.io/crates/d/snm-fdbcli)](https://crates.io/crates/snm-fdbcli)
-[![Recent Downloads](https://img.shields.io/crates/dr/snm-fdbcli)](https://crates.io/crates/snm-fdbcli)
-
-![SnmFDBCLI](https://srotas-suite-space.s3.ap-south-1.amazonaws.com/srotas-space.png)
-
+Based on snm-fdbcli ( https://github.com/srotas-space/snm-fdbcli )
 ### 🧩 Built on the Official FoundationDB Rust Crate
 
 This project is powered by the official FoundationDB Rust bindings:
@@ -18,10 +11,10 @@ foundationdb = { version = "0.10.0", features = ["embedded-fdb-include", "fdb-7_
 ```
 
 
-`snm-fdbcli` is a powerful **FoundationDB Directory/Tuple explorer**, providing:
+`fdbcli-next` is a powerful **FoundationDB Directory/Tuple explorer**, providing:
 
-- ✔️ CLI commands (`dircreate`, `dirlist`, `pack`, `unpack`, `range`, `clearprefix`)  
-- ✔️ A REPL / interactive shell (`snm-fdbcli repl`)  
+- ✔️ CLI commands (`dircreate`, `rmdir`, `dirlist`, `ls`, `cd`, `pack`, `unpack`, `range`, `clearprefix`)  
+- ✔️ A REPL / interactive shell (`fdbcli-next repl`)  
 - ✔️ High-level Rust APIs for directory management  
 - ✔️ Tuple pack/unpack helpers  
 - ✔️ Range queries, prefix queries, deletion  
@@ -50,62 +43,15 @@ foundationdb = { version = "0.10.0", features = ["embedded-fdb-include", "fdb-7_
 
 ---
 
-# 📥 Installation
-
-### Build the CLI
-```bash
-cargo install snm-fdbcli
-```
-
----
-
 # 🔧 Configuration
 
 Export your cluster file path:
 
 ```bash
-export SNM_FDBCLI_DB_PATH="/usr/local/etc/foundationdb/fdb.cluster"
+export FDBCLI_DB_PATH="/usr/local/etc/foundationdb/fdb.cluster"
 ```
 
 If not set, `Database::default()` is used.
-
----
-
-
-### Interactive Shell
-
-```bash
-$ snm-fdbcli repl
-snm-fdbcli> help
-snm-fdbcli> dircreate srotas users
-snm-fdbcli> dirlist
-snm-fdbcli> dirlist srotas
-snm-fdbcli> seed user-1
-snm-fdbcli> show-user user-1
-snm-fdbcli> show-wallet user-1
-snm-fdbcli> logins user-1
-snm-fdbcli> orders user-1
-snm-fdbcli> pack (user-1, 1)
-snm-fdbcli> unpack 0167757365722d31000000000000000100
-snm-fdbcli> range srotas logins (user-1)
-snm-fdbcli> clearprefix srotas logins (user-1)
-snm-fdbcli> dump-all
-snm-fdbcli> exit
-```
-
-
-# 🖥️ CLI Usage
-
-```bash
-snm-fdbcli init
-snm-fdbcli seed --user user-1
-snm-fdbcli show-user user-1
-snm-fdbcli show-wallet user-1
-snm-fdbcli show-logins user-1
-snm-fdbcli show-orders user-1
-snm-fdbcli dump-all
-snm-fdbcli repl
-```
 
 ---
 
@@ -115,18 +61,15 @@ Commands:
 
 ```
 init
-seed <user>
-show-user <user>
-show-wallet <user>
-logins <user>
-orders <user>
-dump-all
 dircreate <path>
 dirlist <path>
 pack (tuple)
 unpack <hex>
 range <dir> (tuple)
 clearprefix <dir> (tuple)
+ls
+cd <dir>
+rmdir <dir>
 help
 exit
 ```
@@ -136,17 +79,8 @@ exit
 # 🔑 Tuple Pack / Unpack
 
 ```
-snm-fdbcli> pack (user-1, 1)
-snm-fdbcli> unpack 01677573...
-```
-
----
-
-# 📚 Range Queries
-
-```
-snm-fdbcli> range srotas/logins (user-1)
-snm-fdbcli> clearprefix srotas/logins (user-1)
+pack (user-1, 1)
+unpack 01677573...
 ```
 
 ---
@@ -163,33 +97,7 @@ cargo test
 cargo test -- --ignored
 ```
 
----
-
-# 📘 Library API Examples
-
-```rust
-let db = snm_fdbcli::connect_db()?;
-let dir = snm_fdbcli::dir_create(&trx, &["srotas", "users"]).await?;
-let key = snm_fdbcli::tuple_pack_from_string("(user-1,1)")?;
-```
-
----
-
-Made with ❤️ by the [Srotas Space] (https://srotas.space/open-source)
-
-
----
-
-## 👥 Contributors
-
-- **[Snm Maurya](https://github.com/xsmmaurya)** - Creator & Lead Developer
-  <img src="https://srotas-suite-space.s3.ap-south-1.amazonaws.com/snm.jpeg" alt="Snm Maurya" width="80" height="80" style="border-radius: 50%;">
-  [LinkedIn](https://www.linkedin.com/in/xsmmaurya/)
-
-
-[![GitHub stars](https://img.shields.io/github/stars/srotas-space/snm-fdbcli?style=social)](https://github.com/srotas-space/snm-fdbcli)
-
-
+Inspired by [Srotas Space] (https://srotas.space/open-source) and https://github.com/srotas-space/snm-fdbcli
 
 ---
 

@@ -6,31 +6,21 @@ use rustyline::DefaultEditor;
 use std::io::{self, Write};
 use std::path::PathBuf;
 
-use snm_fdbcli::{
-    connect_db,
-    create_spaces,
-    open_spaces,
-    dump_dir,
-    prefix_range_for_user,
-    dir_create,
-    dir_list,
-    dir_open,
-    dir_remove,
-    tuple_prefix_range,
-    tuple_pack_from_string,
+use fdbcli_next::{
+    connect_db, create_spaces, dir_create, dir_list, dir_open, dir_remove, dump_dir, open_spaces,
+    prefix_range_for_user, tuple_key_from_string, tuple_pack_from_string, tuple_prefix_range,
     tuple_unpack_to_string,
-    tuple_key_from_string,
 };
 
 use hex;
 
 /// FoundationDB playground for srotas/*
 ///
-/// Uses env snm_fdbcli_DB_PATH as cluster file path if set.
+/// Uses env FDBCLI_DB_PATH as cluster file path if set.
 /// Example:
-///   export snm_fdbcli_DB_PATH=/usr/local/etc/foundationdb/fdb.cluster
+///   export FDBCLI_DB_PATH=/usr/local/etc/foundationdb/fdb.cluster
 #[derive(Parser, Debug)]
-#[command(name = "snm-fdbcli")]
+#[command(name = "fdbcli-next")]
 #[command(about = "FoundationDB Directory/Tuple CLI for Srotas", long_about = None)]
 struct Cli {
     #[command(subcommand)]
@@ -50,24 +40,16 @@ enum Commands {
     },
 
     /// Show a user's JSON record
-    ShowUser {
-        user: String,
-    },
+    ShowUser { user: String },
 
     /// Show a user's wallet JSON
-    ShowWallet {
-        user: String,
-    },
+    ShowWallet { user: String },
 
     /// Show all logins for a user (tuple range)
-    ShowLogins {
-        user: String,
-    },
+    ShowLogins { user: String },
 
     /// Show all orders for a user (tuple range)
-    ShowOrders {
-        user: String,
-    },
+    ShowOrders { user: String },
 
     /// Dump all keys in srotas/* (spaces/directories)
     DumpAll,
@@ -125,14 +107,10 @@ async fn cmd_seed(db: &Database, user_id: &str) -> FdbResult<()> {
     trx.set(&wallet_key, wallet_val);
 
     // logins
-    let login1_key = logins_dir
-        .pack(&(user_id, 1_i64))
-        .expect("pack login1 key");
+    let login1_key = logins_dir.pack(&(user_id, 1_i64)).expect("pack login1 key");
     trx.set(&login1_key, b"login from chrome");
 
-    let login2_key = logins_dir
-        .pack(&(user_id, 2_i64))
-        .expect("pack login2 key");
+    let login2_key = logins_dir.pack(&(user_id, 2_i64)).expect("pack login2 key");
     trx.set(&login2_key, b"login from mobile");
 
     // order
@@ -154,11 +132,7 @@ async fn cmd_show_user(db: &Database, user_id: &str) -> FdbResult<()> {
 
     let user_key = users_dir.pack(&(user_id,)).expect("pack user read key");
     if let Some(v) = trx.get(&user_key, false).await? {
-        println!(
-            "User {}: {}",
-            user_id,
-            String::from_utf8_lossy(v.as_ref())
-        );
+        println!("User {}: {}", user_id, String::from_utf8_lossy(v.as_ref()));
     } else {
         println!("User {} not found", user_id);
     }
@@ -169,9 +143,7 @@ async fn cmd_show_wallet(db: &Database, user_id: &str) -> FdbResult<()> {
     let trx = db.create_trx()?;
     let (_, _, _, wallets_dir) = open_spaces(&trx).await;
 
-    let wallet_key = wallets_dir
-        .pack(&(user_id,))
-        .expect("pack wallet read key");
+    let wallet_key = wallets_dir.pack(&(user_id,)).expect("pack wallet read key");
     if let Some(v) = trx.get(&wallet_key, false).await? {
         println!(
             "Wallet of {}: {}",
@@ -259,18 +231,18 @@ async fn cmd_dump_all(db: &Database) -> FdbResult<()> {
 fn history_file_path() -> PathBuf {
     if let Ok(xdg_data) = std::env::var("XDG_DATA_HOME") {
         let mut path = PathBuf::from(xdg_data);
-        path.push("snm-fdbcli");
+        path.push("fdbcli-next");
         // Create directory if it doesn't exist
         let _ = std::fs::create_dir_all(&path);
         path.push("history.txt");
         path
     } else if let Ok(home) = std::env::var("HOME") {
         let mut path = PathBuf::from(home);
-        path.push(".snm-fdbcli_history");
+        path.push(".fdbcli-next_history");
         path
     } else {
         // Fallback to current directory
-        PathBuf::from(".snm-fdbcli_history")
+        PathBuf::from(".fdbcli-next_history")
     }
 }
 
@@ -484,10 +456,13 @@ async fn execute_command(
                 // Check if trying to remove current directory or a parent
                 let current_path_str = current_dir.join("/");
                 let resolved_path_str = resolved.join("/");
-                if !current_path_str.is_empty() &&
-                   (current_path_str == resolved_path_str ||
-                    current_path_str.starts_with(&format!("{}/", resolved_path_str))) {
-                    println!("Warning: Removing current directory or its parent. Returning to root.");
+                if !current_path_str.is_empty()
+                    && (current_path_str == resolved_path_str
+                        || current_path_str.starts_with(&format!("{}/", resolved_path_str)))
+                {
+                    println!(
+                        "Warning: Removing current directory or its parent. Returning to root."
+                    );
                     current_dir.clear();
                 }
 
@@ -565,7 +540,11 @@ async fn execute_command(
                 };
                 trx.clear_range(&begin, &end);
                 trx.commit().await?;
-                println!("✓ Cleared prefix {:?} in /{}", tuple_str, resolved.join("/"));
+                println!(
+                    "✓ Cleared prefix {:?} in /{}",
+                    tuple_str,
+                    resolved.join("/")
+                );
 
                 Ok(())
             }
@@ -672,7 +651,7 @@ async fn cmd_repl(db: &Database) -> FdbResult<()> {
         // History file doesn't exist yet - this is fine for first run
     }
 
-    println!("snm-fdbcli interactive shell");
+    println!("fdbcli-next interactive shell");
     println!("Type 'help' for commands, 'quit' or 'exit' to leave.");
     println!("Command history: Use UP/DOWN arrows to navigate.\n");
 
@@ -682,9 +661,9 @@ async fn cmd_repl(db: &Database) -> FdbResult<()> {
     loop {
         // Build prompt showing current directory
         let prompt = if current_dir.is_empty() {
-            "snm-fdbcli /> ".to_string()
+            "fdbcli-next /> ".to_string()
         } else {
-            format!("snm-fdbcli /{}> ", current_dir.join("/"))
+            format!("fdbcli-next /{}> ", current_dir.join("/"))
         };
 
         // Read line with rustyline (provides history, editing, etc.)
@@ -757,7 +736,7 @@ async fn cmd_repl(db: &Database) -> FdbResult<()> {
 
 /// Fallback REPL using basic stdin (if rustyline fails)
 async fn cmd_repl_basic(db: &Database) -> FdbResult<()> {
-    println!("snm-fdbcli interactive shell (basic mode)");
+    println!("fdbcli-next interactive shell (basic mode)");
     println!("Type 'help' for commands, 'quit' or 'exit' to leave.\n");
 
     // Track current directory
@@ -766,9 +745,9 @@ async fn cmd_repl_basic(db: &Database) -> FdbResult<()> {
     loop {
         // Build prompt showing current directory
         let prompt = if current_dir.is_empty() {
-            "snm-fdbcli /> ".to_string()
+            "fdbcli-next /> ".to_string()
         } else {
-            format!("snm-fdbcli /{}> ", current_dir.join("/"))
+            format!("fdbcli-next /{}> ", current_dir.join("/"))
         };
 
         print!("{}", prompt);

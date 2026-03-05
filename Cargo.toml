@@ -1,14 +1,14 @@
 [package]
-name = "snm-fdbcli"
-version = "0.2.0"
+name = "fdbcli-next"
+version = "0.0.1"
 edition = "2024"
 rust-version = "1.89.0"
 
-authors = ["Snm Maurya <xsmmaurya@gmail.com>"]
-description = "A lightweight FoundationDB CLI and helper library for creating spaces, tuple subspaces, and running structured FDB queries. Designed for development."
-documentation = "https://github.com/srotas-space/snm-fdbcli"
-homepage = "https://github.com/srotas-space/snm-fdbcli"
-repository = "https://github.com/srotas-space/snm-fdbcli"
+authors = ["Pranav Joglekar", "Snm Maurya <xsmmaurya@gmail.com>"]
+description = "Next generation of fdbcli with better support for layers e.g directory layer"
+documentation = "https://github.com/Pranav2612000/fdbcli-next"
+homepage = "https://github.com/Pranav2612000/fdbcli-next"
+repository = "https://github.com/Pranav2612000/fdbcli-next"
 readme = "README.md"
 license = "MIT"
 
@@ -20,12 +20,12 @@ categories = [
 ]
 
 [lib]
-name = "snm_fdbcli"
+name = "fdbcli_next"
 path = "src/lib.rs"
 
 [[bin]]
-name = "snm-fdbcli"
-path = "src/bin/snm-fdbcli.rs"
+name = "fdbcli-next"
+path = "src/bin/fdbcli-next.rs"
 
 [dependencies]
 foundationdb = { version = "0.10.0", features = ["embedded-fdb-include", "fdb-7_3"] }

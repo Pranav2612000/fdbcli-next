@@ -248,6 +248,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "fdbcli-next"
+version = "0.0.1"
+dependencies = [
+ "clap",
+ "foundationdb",
+ "hex",
+ "rustyline",
+ "tokio",
+]
+
+[[package]]
 name = "foundationdb"
 version = "0.10.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -864,17 +875,6 @@ name = "smallvec"
 version = "1.15.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "67b1b7a3b5fe4f1376887184045fcf45c69e92af734b7aaddc05fb777b6fbd03"
-
-[[package]]
-name = "snm-fdbcli"
-version = "0.2.0"
-dependencies = [
- "clap",
- "foundationdb",
- "hex",
- "rustyline",
- "tokio",
-]
 
 [[package]]
 name = "socket2"
