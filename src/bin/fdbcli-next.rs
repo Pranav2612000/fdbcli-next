@@ -1,10 +1,16 @@
 use clap::{Parser, Subcommand};
 use foundationdb::api::FdbApiBuilder;
 use foundationdb::{Database, FdbResult, RangeOption};
+use rustyline::completion::{Completer, Pair};
 use rustyline::error::ReadlineError;
-use rustyline::DefaultEditor;
+use rustyline::highlight::Highlighter;
+use rustyline::hint::Hinter;
+use rustyline::validate::Validator;
+use rustyline::{CompletionType, Config, Context, Editor, Helper};
 use std::io::{self, Write};
 use std::path::PathBuf;
+use std::sync::{Arc, RwLock};
+use tokio::runtime::Handle;
 
 use fdbcli_next::{
     connect_db, create_spaces, dir_create, dir_list, dir_open, dir_remove, dump_dir, open_spaces,
@@ -371,16 +377,16 @@ async fn execute_command(
     db: &Database,
     cmd: &str,
     args: &[&str],
-    current_dir: &mut Vec<String>,
+    current_dir: &Arc<RwLock<Vec<String>>>,
 ) -> FdbResult<()> {
     match cmd {
         // ------------- Directory navigation -------------
         "cd" => {
-            let new_dir = resolve_path(current_dir, args);
+            let new_dir = resolve_path(&current_dir.read().unwrap(), args);
 
             // Root directory (empty path) always exists, no need to verify
             if new_dir.is_empty() {
-                *current_dir = new_dir;
+                *current_dir.write().unwrap() = new_dir;
                 println!("Changed to: /");
                 return Ok(());
             }
@@ -390,8 +396,9 @@ async fn execute_command(
             let path_refs: Vec<&str> = new_dir.iter().map(|s| s.as_str()).collect();
             match dir_open(&trx, &path_refs).await {
                 Ok(_) => {
-                    *current_dir = new_dir;
-                    println!("Changed to: /{}", current_dir.join("/"));
+                    let path_display = new_dir.join("/");
+                    *current_dir.write().unwrap() = new_dir;
+                    println!("Changed to: /{}", path_display);
                 }
                 Err(e) => {
                     println!("Error: Directory not found: {:?}", e);
@@ -401,10 +408,11 @@ async fn execute_command(
         }
 
         "pwd" => {
-            if current_dir.is_empty() {
+            let current = current_dir.read().unwrap();
+            if current.is_empty() {
                 println!("/");
             } else {
-                println!("/{}", current_dir.join("/"));
+                println!("/{}", current.join("/"));
             }
             Ok(())
         }
@@ -456,7 +464,7 @@ async fn execute_command(
                 Ok(())
             } else {
                 let trx = db.create_trx()?;
-                let resolved = resolve_path(current_dir, args);
+                let resolved = resolve_path(&current_dir.read().unwrap(), args);
                 let path: Vec<&str> = resolved.iter().map(|s| s.as_str()).collect();
                 match dir_create(&trx, &path).await {
                     Ok(_) => {
@@ -471,7 +479,7 @@ async fn execute_command(
 
         "dirlist" | "ls" => {
             let trx = db.create_trx()?;
-            let resolved = resolve_path(current_dir, args);
+            let resolved = resolve_path(&current_dir.read().unwrap(), args);
             let path: Vec<&str> = resolved.iter().map(|s| s.as_str()).collect();
             match dir_list(&trx, &path).await {
                 Ok(children) => {
@@ -498,7 +506,7 @@ async fn execute_command(
                 println!("Usage: rmdir <path...>");
                 Ok(())
             } else {
-                let resolved = resolve_path(current_dir, args);
+                let resolved = resolve_path(&current_dir.read().unwrap(), args);
 
                 // Prevent removing root directory
                 if resolved.is_empty() {
@@ -541,7 +549,7 @@ async fn execute_command(
                                 full_path.push(dir_name.clone());
 
                                 // Check if trying to remove current directory or a parent
-                                let current_path_str = current_dir.join("/");
+                                let current_path_str = current_dir.read().unwrap().join("/");
                                 let full_path_str = full_path.join("/");
                                 if !current_path_str.is_empty()
                                     && (current_path_str == full_path_str
@@ -551,7 +559,7 @@ async fn execute_command(
                                     println!(
                                         "Warning: Removing current directory or its parent. Returning to root."
                                     );
-                                    current_dir.clear();
+                                    current_dir.write().unwrap().clear();
                                 }
 
                                 let path_refs: Vec<&str> =
@@ -583,7 +591,7 @@ async fn execute_command(
                 } else {
                     // No wildcard - original behavior
                     // Check if trying to remove current directory or a parent
-                    let current_path_str = current_dir.join("/");
+                    let current_path_str = current_dir.read().unwrap().join("/");
                     let resolved_path_str = resolved.join("/");
                     if !current_path_str.is_empty()
                         && (current_path_str == resolved_path_str
@@ -592,7 +600,7 @@ async fn execute_command(
                         println!(
                             "Warning: Removing current directory or its parent. Returning to root."
                         );
-                        current_dir.clear();
+                        current_dir.write().unwrap().clear();
                     }
 
                     let trx = db.create_trx()?;
@@ -650,7 +658,7 @@ async fn execute_command(
             } else {
                 let (path_args, tuple_arg) = args.split_at(args.len() - 1);
                 let tuple_str = tuple_arg[0].to_string();
-                let resolved = resolve_path(current_dir, path_args);
+                let resolved = resolve_path(&current_dir.read().unwrap(), path_args);
                 let path: Vec<&str> = resolved.iter().map(|s| s.as_str()).collect();
 
                 let trx = db.create_trx()?;
@@ -687,7 +695,7 @@ async fn execute_command(
             } else {
                 let (path_args, tuple_arg) = args.split_at(args.len() - 1);
                 let tuple_str = tuple_arg[0].to_string();
-                let resolved = resolve_path(current_dir, path_args);
+                let resolved = resolve_path(&current_dir.read().unwrap(), path_args);
                 let path: Vec<&str> = resolved.iter().map(|s| s.as_str()).collect();
 
                 let trx = db.create_trx()?;
@@ -731,7 +739,7 @@ async fn execute_command(
             } else {
                 let (path_args, tuple_arg) = args.split_at(args.len() - 1);
                 let tuple_str = tuple_arg[0].to_string();
-                let resolved = resolve_path(current_dir, path_args);
+                let resolved = resolve_path(&current_dir.read().unwrap(), path_args);
                 let path: Vec<&str> = resolved.iter().map(|s| s.as_str()).collect();
 
                 let trx = db.create_trx()?;
@@ -764,10 +772,176 @@ async fn execute_command(
     }
 }
 
+// Tab completion helper for FDB directories
+struct FdbDirectoryCompleter<'a> {
+    db: &'a Database,
+    current_dir: Arc<RwLock<Vec<String>>>,
+    runtime_handle: Handle,
+}
+
+impl<'a> FdbDirectoryCompleter<'a> {
+    fn new(db: &'a Database, current_dir: Arc<RwLock<Vec<String>>>) -> Self {
+        Self {
+            db,
+            current_dir,
+            runtime_handle: Handle::current(),
+        }
+    }
+
+    // Get directory children for a given path
+    fn get_directory_children(&self, path: &[String]) -> Vec<String> {
+        // Use block_in_place to run async code from within the runtime
+        tokio::task::block_in_place(|| {
+            self.runtime_handle
+                .block_on(async {
+                    let trx = self.db.create_trx().ok()?;
+                    let path_refs: Vec<&str> = path.iter().map(|s| s.as_str()).collect();
+                    dir_list(&trx, &path_refs).await.ok()
+                })
+                .unwrap_or_default()
+        })
+    }
+}
+
+impl<'a> Completer for FdbDirectoryCompleter<'a> {
+    type Candidate = Pair;
+
+    fn complete(
+        &self,
+        line: &str,
+        pos: usize,
+        _ctx: &Context<'_>,
+    ) -> rustyline::Result<(usize, Vec<Pair>)> {
+        // Parse the line to extract command and path
+        let parts: Vec<&str> = line[..pos].split_whitespace().collect();
+
+        if parts.is_empty() {
+            return Ok((0, vec![]));
+        }
+
+        let command = parts[0];
+
+        // Only complete for directory commands
+        if !matches!(command, "cd" | "ls" | "dirlist" | "dircreate" | "rmdir") {
+            return Ok((0, vec![]));
+        }
+
+        // Get the path argument (or empty string if none)
+        let path_arg = parts.get(1).copied().unwrap_or("");
+
+        // Determine if this is an absolute path
+        let is_absolute = path_arg.starts_with('/');
+
+        // Split path into segments
+        let segments: Vec<&str> = if path_arg.is_empty() {
+            vec![]
+        } else {
+            path_arg.split('/').collect()
+        };
+
+        // Determine parent path and incomplete segment
+        let (parent_segments, incomplete): (Vec<&str>, &str) = if is_absolute {
+            // Absolute path: /foo/bar/baz -> parent: ["foo", "bar"], incomplete: "baz"
+            if segments.len() > 1 {
+                let filtered: Vec<&str> = segments[1..segments.len() - 1]
+                    .iter()
+                    .filter(|s| !s.is_empty())
+                    .copied()
+                    .collect();
+                (filtered, segments.last().unwrap())
+            } else if segments.len() == 1 {
+                // Just "/", list root
+                if segments[0].is_empty() {
+                    (vec![], "")
+                } else {
+                    // "/foo" -> parent: [], incomplete: "foo"
+                    (vec![], segments[0])
+                }
+            } else {
+                (vec![], "")
+            }
+        } else {
+            // Relative path: foo/bar/baz -> parent: ["foo", "bar"], incomplete: "baz"
+            if segments.is_empty() {
+                // Empty path, list current directory
+                (vec![], "")
+            } else if segments.len() == 1 {
+                // Single segment, incomplete is the whole thing
+                (vec![], segments[0])
+            } else {
+                // Multiple segments
+                (
+                    segments[..segments.len() - 1].to_vec(),
+                    segments.last().unwrap(),
+                )
+            }
+        };
+
+        // Build the absolute path to query
+        let query_path: Vec<String> = if is_absolute {
+            parent_segments.iter().map(|s| s.to_string()).collect()
+        } else {
+            // Combine current_dir with parent_segments
+            let current = self.current_dir.read().unwrap();
+            let mut full_path = current.clone();
+            full_path.extend(parent_segments.iter().map(|s| s.to_string()));
+            full_path
+        };
+
+        // Query FDB for children
+        let children = self.get_directory_children(&query_path);
+
+        // Filter by prefix and create candidates
+        let candidates: Vec<Pair> = children
+            .iter()
+            .filter(|name| name.starts_with(incomplete))
+            .map(|name| Pair {
+                display: name.clone(),
+                replacement: format!("{}/", name),
+            })
+            .collect();
+
+        // Calculate start position (where to start replacing)
+        let start_pos = if path_arg.is_empty() {
+            pos
+        } else {
+            // Find the start of the incomplete segment
+            line[..pos]
+                .rfind(incomplete)
+                .unwrap_or(pos.saturating_sub(incomplete.len()))
+        };
+
+        Ok((start_pos, candidates))
+    }
+}
+
+// Implement required helper traits
+impl<'a> Helper for FdbDirectoryCompleter<'a> {}
+impl<'a> Highlighter for FdbDirectoryCompleter<'a> {}
+impl<'a> Hinter for FdbDirectoryCompleter<'a> {
+    type Hint = String;
+}
+impl<'a> Validator for FdbDirectoryCompleter<'a> {}
+
 async fn cmd_repl(db: &Database) -> FdbResult<()> {
-    // Initialize rustyline editor
-    let mut rl = match DefaultEditor::new() {
-        Ok(editor) => editor,
+    // Track current directory (shared with completer)
+    let current_dir = Arc::new(RwLock::new(Vec::<String>::new()));
+
+    // Create tab completion helper
+    let completer = FdbDirectoryCompleter::new(db, current_dir.clone());
+
+    // Configure editor with completion
+    let config = Config::builder()
+        .auto_add_history(true)
+        .completion_type(CompletionType::List)
+        .build();
+
+    // Initialize rustyline editor with completer
+    let mut rl = match Editor::with_config(config) {
+        Ok(mut editor) => {
+            editor.set_helper(Some(completer));
+            editor
+        }
         Err(e) => {
             eprintln!("Warning: Could not initialize line editor: {}", e);
             eprintln!("History and line editing features will not be available.");
@@ -783,17 +957,18 @@ async fn cmd_repl(db: &Database) -> FdbResult<()> {
 
     println!("fdbcli-next interactive shell");
     println!("Type 'help' for commands, 'quit' or 'exit' to leave.");
-    println!("Command history: Use UP/DOWN arrows to navigate.\n");
-
-    // Track current directory
-    let mut current_dir: Vec<String> = Vec::new();
+    println!("Command history: Use UP/DOWN arrows to navigate.");
+    println!("Tab completion: Press TAB to complete directory names.\n");
 
     loop {
         // Build prompt showing current directory
-        let prompt = if current_dir.is_empty() {
-            "fdbcli-next /> ".to_string()
-        } else {
-            format!("fdbcli-next /{}> ", current_dir.join("/"))
+        let prompt = {
+            let current = current_dir.read().unwrap();
+            if current.is_empty() {
+                "fdbcli-next /> ".to_string()
+            } else {
+                format!("fdbcli-next /{}> ", current.join("/"))
+            }
         };
 
         // Read line with rustyline (provides history, editing, etc.)
@@ -833,7 +1008,7 @@ async fn cmd_repl(db: &Database) -> FdbResult<()> {
                 let cmd = parts[0];
                 let args = &parts[1..];
 
-                let result = execute_command(db, cmd, args, &mut current_dir).await;
+                let result = execute_command(db, cmd, args, &current_dir).await;
 
                 if let Err(e) = result {
                     eprintln!("Error: {:?}", e);
@@ -869,15 +1044,18 @@ async fn cmd_repl_basic(db: &Database) -> FdbResult<()> {
     println!("fdbcli-next interactive shell (basic mode)");
     println!("Type 'help' for commands, 'quit' or 'exit' to leave.\n");
 
-    // Track current directory
-    let mut current_dir: Vec<String> = Vec::new();
+    // Track current directory (no completer, but still use Arc<RwLock> for execute_command compatibility)
+    let current_dir = Arc::new(RwLock::new(Vec::<String>::new()));
 
     loop {
         // Build prompt showing current directory
-        let prompt = if current_dir.is_empty() {
-            "fdbcli-next /> ".to_string()
-        } else {
-            format!("fdbcli-next /{}> ", current_dir.join("/"))
+        let prompt = {
+            let current = current_dir.read().unwrap();
+            if current.is_empty() {
+                "fdbcli-next /> ".to_string()
+            } else {
+                format!("fdbcli-next /{}> ", current.join("/"))
+            }
         };
 
         print!("{}", prompt);
@@ -911,7 +1089,7 @@ async fn cmd_repl_basic(db: &Database) -> FdbResult<()> {
         let cmd = parts[0];
         let args = &parts[1..];
 
-        let result = execute_command(db, cmd, args, &mut current_dir).await;
+        let result = execute_command(db, cmd, args, &current_dir).await;
 
         if let Err(e) = result {
             eprintln!("Error: {:?}", e);
