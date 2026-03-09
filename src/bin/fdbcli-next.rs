@@ -308,12 +308,15 @@ fn resolve_path(current_dir: &[String], args: &[&str]) -> Vec<String> {
     let mut result = current_dir.to_vec();
 
     for arg in args {
-        if *arg == ".." {
+        // Strip trailing slashes from the argument
+        let arg_trimmed = arg.trim_end_matches('/');
+
+        if arg_trimmed == ".." {
             result.pop();
-        } else if *arg == "/" {
+        } else if arg_trimmed == "/" || arg_trimmed.is_empty() {
             result.clear();
         } else {
-            result.push(arg.to_string());
+            result.push(arg_trimmed.to_string());
         }
     }
 
