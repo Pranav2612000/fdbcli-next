@@ -13,9 +13,9 @@ use std::sync::{Arc, RwLock};
 use tokio::runtime::Handle;
 
 use fdbcli_next::{
-    connect_db, create_spaces, dir_create, dir_list, dir_open, dir_remove, dump_dir, open_spaces,
-    prefix_range_for_user, tuple_key_from_string, tuple_pack_from_string, tuple_prefix_range,
-    tuple_unpack_to_string,
+    connect_db, create_spaces, dir_create, dir_list, dir_list_with_prefixes, dir_open, dir_remove,
+    dump_dir, open_spaces, prefix_range_for_user, tuple_key_from_string, tuple_pack_from_string,
+    tuple_prefix_range, tuple_unpack_to_string,
 };
 
 use hex;
@@ -273,6 +273,7 @@ fn print_help() {
          - dircreate <path...>        # dircreate srotas users\n\
          - dirlist [path...]          # dirlist ; dirlist srotas\n\
          - ls [path...]               # alias for dirlist\n\
+         - sublist [path...]          # list subspaces with prefixes\n\
          - rmdir <path...>            # remove directory and its contents\n\
                                       # supports wildcard: rmdir test*\n\
          \n\
@@ -496,6 +497,31 @@ async fn execute_command(
                     } else {
                         for c in children {
                             println!("  {}", c);
+                        }
+                    }
+                }
+                Err(e) => println!("Error: {:?}", e),
+            }
+            Ok(())
+        }
+
+        "sublist" => {
+            let trx = db.create_trx()?;
+            let resolved = resolve_path(&current_dir.read().unwrap(), args);
+            let path: Vec<&str> = resolved.iter().map(|s| s.as_str()).collect();
+            match dir_list_with_prefixes(&trx, &path).await {
+                Ok(subspaces) => {
+                    if resolved.is_empty() {
+                        println!("Root subspaces:");
+                    } else {
+                        println!("Subspaces under /{}:", resolved.join("/"));
+                    }
+                    if subspaces.is_empty() {
+                        println!("  (none)");
+                    } else {
+                        for (name, prefix) in subspaces {
+                            let prefix_hex = hex::encode(&prefix);
+                            println!("  {} (prefix: {})", name, prefix_hex);
                         }
                     }
                 }
@@ -825,7 +851,7 @@ impl<'a> Completer for FdbDirectoryCompleter<'a> {
         let command = parts[0];
 
         // Only complete for directory commands
-        if !matches!(command, "cd" | "ls" | "dirlist" | "dircreate" | "rmdir") {
+        if !matches!(command, "cd" | "ls" | "dirlist" | "sublist" | "dircreate" | "rmdir") {
             return Ok((0, vec![]));
         }
 

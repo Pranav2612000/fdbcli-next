@@ -169,6 +169,46 @@ pub async fn dir_remove(trx: &Transaction, path: &[&str]) -> Result<bool, Direct
     Ok(removed)
 }
 
+/// List child directories (subspaces) under `path` with their key prefixes.
+/// Returns a vector of (name, prefix) tuples where prefix is the subspace prefix bytes.
+pub async fn dir_list_with_prefixes(
+    trx: &Transaction,
+    path: &[&str],
+) -> Result<Vec<(String, Vec<u8>)>, DirectoryError> {
+    let layer = DirectoryLayer::default();
+    let vec_path: Vec<String> = path.iter().map(|s| s.to_string()).collect();
+    let children = layer.list(trx, &vec_path).await?;
+
+    let mut result = Vec::new();
+    for child in children {
+        // Build the full path to the child
+        let mut child_path = vec_path.clone();
+        child_path.push(child.clone());
+
+        // Open the child directory to get its prefix
+        match layer.open(trx, &child_path, None).await {
+            Ok(dir_output) => {
+                match dir_output.bytes() {
+                    Ok(prefix_bytes) => {
+                        let prefix = prefix_bytes.to_vec();
+                        result.push((child, prefix));
+                    }
+                    Err(_) => {
+                        // If we can't get the prefix, skip it
+                        continue;
+                    }
+                }
+            }
+            Err(_) => {
+                // If we can't open it, skip it (shouldn't normally happen)
+                continue;
+            }
+        }
+    }
+
+    Ok(result)
+}
+
 // ---- simple tuple support for REPL prefix / pack / unpack ----
 
 /// Very simple tuple parser: expects "(value)" and uses it as a single-string tuple.
