@@ -615,16 +615,24 @@ async fn execute_command(
             // Execute the set operation
             let trx = db.create_trx()?;
 
-            // Open the directory (validates it exists)
-            let dir = match dir_open(&trx, &path).await {
-                Ok(d) => d,
-                Err(e) => {
-                    if let Some(subspace) = subspace_name {
-                        println!("Error: Subspace '{}' not found: {:?}", subspace, e);
-                    } else {
-                        println!("Error opening directory /{}: {:?}", resolved.join("/"), e);
+            // Create or open the directory
+            // When using --subspace, create the subspace if it doesn't exist
+            let dir = if subspace_name.is_some() {
+                match dir_create(&trx, &path).await {
+                    Ok(d) => d,
+                    Err(e) => {
+                        println!("Error creating/opening subspace '{}': {:?}", subspace_name.unwrap(), e);
+                        return Ok(());
                     }
-                    return Ok(());
+                }
+            } else {
+                // For current directory, just open (don't create)
+                match dir_open(&trx, &path).await {
+                    Ok(d) => d,
+                    Err(e) => {
+                        println!("Error opening directory /{}: {:?}", resolved.join("/"), e);
+                        return Ok(());
+                    }
                 }
             };
 
