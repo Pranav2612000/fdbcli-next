@@ -13,21 +13,20 @@ use std::sync::{Arc, RwLock};
 use tokio::runtime::Handle;
 
 use fdbcli_next::{
-    connect_db, create_spaces, dir_create, dir_list, dir_list_with_prefixes, dir_open, dir_remove,
-    dump_dir, open_spaces, prefix_range_for_user, tuple_key_from_string, tuple_pack_from_string,
-    tuple_prefix_range, tuple_unpack_to_string,
+    connect_db, dir_create, dir_list, dir_list_with_prefixes, dir_open, dir_remove,
+    tuple_key_from_string, tuple_pack_from_string, tuple_prefix_range, tuple_unpack_to_string,
 };
 
 use hex;
 
-/// FoundationDB playground for srotas/*
+/// Generic FoundationDB Directory/Tuple CLI
 ///
 /// Uses env FDBCLI_DB_PATH as cluster file path if set.
 /// Example:
 ///   export FDBCLI_DB_PATH=/usr/local/etc/foundationdb/fdb.cluster
 #[derive(Parser, Debug)]
 #[command(name = "fdbcli-next")]
-#[command(about = "FoundationDB Directory/Tuple CLI for Srotas", long_about = None)]
+#[command(about = "FoundationDB Directory/Tuple CLI", long_about = None)]
 struct Cli {
     #[command(subcommand)]
     command: Commands,
@@ -35,31 +34,6 @@ struct Cli {
 
 #[derive(Subcommand, Debug)]
 enum Commands {
-    /// Create base directories: srotas/users, logins, orders, wallets
-    Init,
-
-    /// Seed a sample user (only when you call it)
-    Seed {
-        /// User id to seed (default: user-1)
-        #[arg(short, long, default_value = "user-1")]
-        user: String,
-    },
-
-    /// Show a user's JSON record
-    ShowUser { user: String },
-
-    /// Show a user's wallet JSON
-    ShowWallet { user: String },
-
-    /// Show all logins for a user (tuple range)
-    ShowLogins { user: String },
-
-    /// Show all orders for a user (tuple range)
-    ShowOrders { user: String },
-
-    /// Dump all keys in srotas/* (spaces/directories)
-    DumpAll,
-
     /// Start interactive shell (REPL)
     Repl,
 }
@@ -73,158 +47,8 @@ async fn main() -> FdbResult<()> {
     let db = connect_db()?;
 
     match cli.command {
-        Commands::Init => cmd_init(&db).await?,
-        Commands::Seed { user } => cmd_seed(&db, &user).await?,
-        Commands::ShowUser { user } => cmd_show_user(&db, &user).await?,
-        Commands::ShowWallet { user } => cmd_show_wallet(&db, &user).await?,
-        Commands::ShowLogins { user } => cmd_show_logins(&db, &user).await?,
-        Commands::ShowOrders { user } => cmd_show_orders(&db, &user).await?,
-        Commands::DumpAll => cmd_dump_all(&db).await?,
         Commands::Repl => cmd_repl(&db).await?,
     }
-
-    Ok(())
-}
-
-// ---------------------------------------------------------------------
-// Srotas-specific commands
-// ---------------------------------------------------------------------
-
-async fn cmd_init(db: &Database) -> FdbResult<()> {
-    let trx = db.create_trx()?;
-    let _ = create_spaces(&trx).await; // just create/open
-    trx.commit().await?;
-    println!("✓ Directories created: srotas/users, logins, orders, wallets");
-    Ok(())
-}
-
-async fn cmd_seed(db: &Database, user_id: &str) -> FdbResult<()> {
-    let trx = db.create_trx()?;
-    let (users_dir, logins_dir, orders_dir, wallets_dir) = create_spaces(&trx).await;
-
-    // user
-    let user_key = users_dir.pack(&(user_id,)).expect("pack user key");
-    let user_val = format!(r#"{{"name":"Alice","id":"{}"}}"#, user_id);
-    trx.set(&user_key, user_val.as_bytes());
-
-    // wallet
-    let wallet_key = wallets_dir.pack(&(user_id,)).expect("pack wallet key");
-    let wallet_val = br#"{"balance":1000,"asset":"USDT"}"#;
-    trx.set(&wallet_key, wallet_val);
-
-    // logins
-    let login1_key = logins_dir.pack(&(user_id, 1_i64)).expect("pack login1 key");
-    trx.set(&login1_key, b"login from chrome");
-
-    let login2_key = logins_dir.pack(&(user_id, 2_i64)).expect("pack login2 key");
-    trx.set(&login2_key, b"login from mobile");
-
-    // order
-    let order_id = "ord-001";
-    let order_key = orders_dir
-        .pack(&(user_id, order_id))
-        .expect("pack order key");
-    let order_val = br#"{"side":"BUY","qty":0.1,"asset":"BTCUSDT"}"#;
-    trx.set(&order_key, order_val);
-
-    trx.commit().await?;
-    println!("✓ Seeded user {}, wallet, 2 logins and 1 order", user_id);
-    Ok(())
-}
-
-async fn cmd_show_user(db: &Database, user_id: &str) -> FdbResult<()> {
-    let trx = db.create_trx()?;
-    let (users_dir, _, _, _) = open_spaces(&trx).await;
-
-    let user_key = users_dir.pack(&(user_id,)).expect("pack user read key");
-    if let Some(v) = trx.get(&user_key, false).await? {
-        println!("User {}: {}", user_id, String::from_utf8_lossy(v.as_ref()));
-    } else {
-        println!("User {} not found", user_id);
-    }
-    Ok(())
-}
-
-async fn cmd_show_wallet(db: &Database, user_id: &str) -> FdbResult<()> {
-    let trx = db.create_trx()?;
-    let (_, _, _, wallets_dir) = open_spaces(&trx).await;
-
-    let wallet_key = wallets_dir.pack(&(user_id,)).expect("pack wallet read key");
-    if let Some(v) = trx.get(&wallet_key, false).await? {
-        println!(
-            "Wallet of {}: {}",
-            user_id,
-            String::from_utf8_lossy(v.as_ref())
-        );
-    } else {
-        println!("Wallet for {} not found", user_id);
-    }
-    Ok(())
-}
-
-async fn cmd_show_logins(db: &Database, user_id: &str) -> FdbResult<()> {
-    let trx = db.create_trx()?;
-    let (_, logins_dir, _, _) = open_spaces(&trx).await;
-
-    let (begin, end) = prefix_range_for_user(&logins_dir, user_id);
-    let range = RangeOption::from((begin.as_slice(), end.as_slice()));
-    let kvs = trx.get_range(&range, 1000, false).await?;
-
-    println!("Logins for user {}:", user_id);
-    if kvs.is_empty() {
-        println!("  (none)");
-    } else {
-        for kv in kvs.iter() {
-            println!(
-                "  key = {:?}, value = {}",
-                kv.key(),
-                String::from_utf8_lossy(kv.value())
-            );
-        }
-    }
-
-    Ok(())
-}
-
-async fn cmd_show_orders(db: &Database, user_id: &str) -> FdbResult<()> {
-    let trx = db.create_trx()?;
-    let (_, _, orders_dir, _) = open_spaces(&trx).await;
-
-    let (begin, end) = prefix_range_for_user(&orders_dir, user_id);
-    let range = RangeOption::from((begin.as_slice(), end.as_slice()));
-    let kvs = trx.get_range(&range, 1000, false).await?;
-
-    println!("Orders for user {}:", user_id);
-    if kvs.is_empty() {
-        println!("  (none)");
-    } else {
-        for kv in kvs.iter() {
-            println!(
-                "  key = {:?}, value = {}",
-                kv.key(),
-                String::from_utf8_lossy(kv.value())
-            );
-        }
-    }
-
-    Ok(())
-}
-
-async fn cmd_dump_all(db: &Database) -> FdbResult<()> {
-    let trx = db.create_trx()?;
-    let (users_dir, logins_dir, orders_dir, wallets_dir) = open_spaces(&trx).await;
-
-    println!("=== srotas/users ===");
-    dump_dir(&trx, &users_dir, 1000).await?;
-
-    println!("\n=== srotas/logins ===");
-    dump_dir(&trx, &logins_dir, 1000).await?;
-
-    println!("\n=== srotas/orders ===");
-    dump_dir(&trx, &orders_dir, 1000).await?;
-
-    println!("\n=== srotas/wallets ===");
-    dump_dir(&trx, &wallets_dir, 1000).await?;
 
     Ok(())
 }
@@ -256,22 +80,13 @@ fn history_file_path() -> PathBuf {
 fn print_help() {
     println!(
         "Commands:\n\
-         # Srotas helpers\n\
-         - init\n\
-         - seed <user_id>\n\
-         - show-user <user_id>\n\
-         - show-wallet <user_id>\n\
-         - logins <user_id>\n\
-         - orders <user_id>\n\
-         - dump-all\n\
-         \n\
-         # Directory layer (dynamic)\n\
+         # Directory layer\n\
          - cd <path...>               # change current directory\n\
          - cd ..                      # go up one directory\n\
          - cd /                       # go to root directory\n\
          - pwd                        # print current directory\n\
-         - dircreate <path...>        # dircreate srotas users\n\
-         - dirlist [path...]          # dirlist ; dirlist srotas\n\
+         - dircreate <path...>        # create directory\n\
+         - dirlist [path...]          # list directories\n\
          - ls [path...]               # alias for dirlist\n\
          - sublist [path...]          # list subspaces with prefixes\n\
          - rmdir <path...>            # remove directory and its contents\n\
@@ -421,47 +236,7 @@ async fn execute_command(
             Ok(())
         }
 
-        // ------------- Srotas helpers -------------
-        "init" => cmd_init(db).await,
-        "seed" => {
-            let user = args.get(0).copied().unwrap_or("user-1");
-            cmd_seed(db, user).await
-        }
-        "show-user" => {
-            if let Some(user) = args.get(0) {
-                cmd_show_user(db, user).await
-            } else {
-                println!("Usage: show-user <user_id>");
-                Ok(())
-            }
-        }
-        "show-wallet" => {
-            if let Some(user) = args.get(0) {
-                cmd_show_wallet(db, user).await
-            } else {
-                println!("Usage: show-wallet <user_id>");
-                Ok(())
-            }
-        }
-        "logins" => {
-            if let Some(user) = args.get(0) {
-                cmd_show_logins(db, user).await
-            } else {
-                println!("Usage: logins <user_id>");
-                Ok(())
-            }
-        }
-        "orders" => {
-            if let Some(user) = args.get(0) {
-                cmd_show_orders(db, user).await
-            } else {
-                println!("Usage: orders <user_id>");
-                Ok(())
-            }
-        }
-        "dump-all" => cmd_dump_all(db).await,
-
-        // ------------- Directory commands (dynamic) -------------
+        // ------------- Directory commands -------------
         "dircreate" => {
             if args.is_empty() {
                 println!("Usage: dircreate <path...>");

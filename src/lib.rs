@@ -20,92 +20,6 @@ pub fn connect_db() -> FdbResult<Database> {
     }
 }
 
-/// Create or open the four core spaces under `srotas/*`.
-///
-/// Returns (users_dir, logins_dir, orders_dir, wallets_dir)
-pub async fn create_spaces(
-    trx: &Transaction,
-) -> (
-    DirectoryOutput,
-    DirectoryOutput,
-    DirectoryOutput,
-    DirectoryOutput,
-) {
-    let dir_layer = DirectoryLayer::default();
-
-    let users_path = vec!["srotas".to_string(), "users".to_string()];
-    let logins_path = vec!["srotas".to_string(), "logins".to_string()];
-    let orders_path = vec!["srotas".to_string(), "orders".to_string()];
-    let wallets_path = vec!["srotas".to_string(), "wallets".to_string()];
-
-    let users_dir = dir_layer
-        .create_or_open(trx, &users_path, None, None)
-        .await
-        .expect("create/open srotas/users failed");
-
-    let logins_dir = dir_layer
-        .create_or_open(trx, &logins_path, None, None)
-        .await
-        .expect("create/open srotas/logins failed");
-
-    let orders_dir = dir_layer
-        .create_or_open(trx, &orders_path, None, None)
-        .await
-        .expect("create/open srotas/orders failed");
-
-    let wallets_dir = dir_layer
-        .create_or_open(trx, &wallets_path, None, None)
-        .await
-        .expect("create/open srotas/wallets failed");
-
-    (users_dir, logins_dir, orders_dir, wallets_dir)
-}
-
-/// Open existing spaces (fails if they don't exist).
-pub async fn open_spaces(
-    trx: &Transaction,
-) -> (
-    DirectoryOutput,
-    DirectoryOutput,
-    DirectoryOutput,
-    DirectoryOutput,
-) {
-    let dir_layer = DirectoryLayer::default();
-
-    let users_path = vec!["srotas".to_string(), "users".to_string()];
-    let logins_path = vec!["srotas".to_string(), "logins".to_string()];
-    let orders_path = vec!["srotas".to_string(), "orders".to_string()];
-    let wallets_path = vec!["srotas".to_string(), "wallets".to_string()];
-
-    let users_dir = dir_layer
-        .open(trx, &users_path, None)
-        .await
-        .expect("open srotas/users failed");
-    let logins_dir = dir_layer
-        .open(trx, &logins_path, None)
-        .await
-        .expect("open srotas/logins failed");
-    let orders_dir = dir_layer
-        .open(trx, &orders_path, None)
-        .await
-        .expect("open srotas/orders failed");
-    let wallets_dir = dir_layer
-        .open(trx, &wallets_path, None)
-        .await
-        .expect("open srotas/wallets failed");
-
-    (users_dir, logins_dir, orders_dir, wallets_dir)
-}
-
-/// Build a prefix range for "all keys starting with this user's id" in a subspace.
-pub fn prefix_range_for_user(dir: &DirectoryOutput, user_id: &str) -> (Vec<u8>, Vec<u8>) {
-    let prefix = dir.pack(&(user_id,)).expect("pack user prefix");
-    let mut end = prefix.clone();
-    end.push(0xFF); // simple prefix upper-bound
-
-    (prefix, end)
-}
-
 /// Dump an entire directory (bounded by `limit`).
 pub async fn dump_dir(trx: &Transaction, dir: &DirectoryOutput, limit: i32) -> FdbResult<()> {
     let (begin, end) = dir.range().expect("dir.range()");
@@ -133,7 +47,7 @@ pub async fn dump_dir(trx: &Transaction, dir: &DirectoryOutput, limit: i32) -> F
 // Generic directory + tuple helpers (for dynamic REPL commands)
 // =====================================================================
 
-/// Generic: create or open a directory like ["srotas"], ["srotas","users"]
+/// Generic: create or open a directory like ["app"], ["app","users"]
 pub async fn dir_create(
     trx: &Transaction,
     path: &[&str],
