@@ -99,6 +99,8 @@ fn print_help() {
          # Range & delete by tuple prefix\n\
          - clearprefix <path...> (tuple)\n\
          - range <path...> (tuple)\n\
+         - setkey (tuple) value                      # set key in current directory\n\
+         - setkey --subspace name (tuple) value      # set key in subspace\n\
          - delkey <path...> (tuple)   # delete single key\n\
          \n\
          - help\n\
@@ -567,6 +569,94 @@ async fn execute_command(
 
                 Ok(())
             }
+        }
+
+        "setkey" => {
+            if args.is_empty() {
+                println!("Usage: setkey [--subspace name] (tuple) value");
+                return Ok(());
+            }
+
+            // Parse arguments for optional --subspace flag
+            let (subspace_name, remaining_args) = if args.get(0).map(|s| *s) == Some("--subspace") {
+                if args.len() < 2 {
+                    println!("Error: --subspace requires a subspace name");
+                    println!("Usage: setkey --subspace name (tuple) value");
+                    return Ok(());
+                }
+                (Some(args[1]), &args[2..])
+            } else {
+                (None, args)
+            };
+
+            // Validate we have at least tuple and value
+            if remaining_args.len() < 2 {
+                println!("Usage: setkey [--subspace name] (tuple) value");
+                return Ok(());
+            }
+
+            // Split into tuple and value (everything after tuple is the value)
+            let tuple_str = remaining_args[0].to_string();
+            let value_str = remaining_args[1..].join(" ");
+
+            // Determine the directory path
+            let resolved = if let Some(subspace) = subspace_name {
+                // Build path: current_dir + subspace_name
+                let mut path = current_dir.read().unwrap().clone();
+                path.push(subspace.to_string());
+                path
+            } else {
+                // Use current directory
+                current_dir.read().unwrap().clone()
+            };
+
+            let path: Vec<&str> = resolved.iter().map(|s| s.as_str()).collect();
+
+            // Execute the set operation
+            let trx = db.create_trx()?;
+
+            // Open the directory (validates it exists)
+            let dir = match dir_open(&trx, &path).await {
+                Ok(d) => d,
+                Err(e) => {
+                    if let Some(subspace) = subspace_name {
+                        println!("Error: Subspace '{}' not found: {:?}", subspace, e);
+                    } else {
+                        println!("Error opening directory /{}: {:?}", resolved.join("/"), e);
+                    }
+                    return Ok(());
+                }
+            };
+
+            // Build the key from tuple
+            let key = match tuple_key_from_string(&dir, &tuple_str) {
+                Ok(k) => k,
+                Err(e) => {
+                    println!("Tuple parse error: {}", e);
+                    return Ok(());
+                }
+            };
+
+            // Convert value to bytes (UTF-8)
+            let value_bytes = value_str.as_bytes();
+
+            // Set the key
+            trx.set(&key, value_bytes);
+
+            // Commit transaction
+            trx.commit().await?;
+
+            // Success message
+            if let Some(subspace) = subspace_name {
+                println!("✓ Set key {} = {:?} in subspace '{}' of /{}",
+                         tuple_str, value_str, subspace,
+                         current_dir.read().unwrap().join("/"));
+            } else {
+                println!("✓ Set key {} = {:?} in /{}",
+                         tuple_str, value_str, resolved.join("/"));
+            }
+
+            Ok(())
         }
 
         other => {
