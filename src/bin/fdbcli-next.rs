@@ -99,6 +99,7 @@ fn print_help() {
          # Range & delete by tuple prefix\n\
          - clearprefix <path...> (tuple)\n\
          - range <path...> (tuple)\n\
+         - getallvalues [path...]     # get all key-value pairs in directory\n\
          - setkey (tuple) value                      # set key in current directory\n\
          - setkey --subspace name (tuple) value      # set key in subspace\n\
          - delkey <path...> (tuple)   # delete single key\n\
@@ -536,6 +537,44 @@ async fn execute_command(
                 }
                 Ok(())
             }
+        }
+
+        "getallvalues" => {
+            let resolved = resolve_path(&current_dir.read().unwrap(), args);
+            let path: Vec<&str> = resolved.iter().map(|s| s.as_str()).collect();
+
+            let trx = db.create_trx()?;
+            let dir = match dir_open(&trx, &path).await {
+                Ok(d) => d,
+                Err(e) => {
+                    println!("Error opening dir /{}: {:?}", resolved.join("/"), e);
+                    return Ok(());
+                }
+            };
+
+            // Get the full range for this directory
+            let (begin, end) = dir.range().expect("dir.range()");
+            let range = RangeOption::from((begin.as_slice(), end.as_slice()));
+            let kvs = trx.get_range(&range, 10_000, false).await?;
+
+            if resolved.is_empty() {
+                println!("All key-value pairs in /:");
+            } else {
+                println!("All key-value pairs in /{}:", resolved.join("/"));
+            }
+
+            if kvs.is_empty() {
+                println!("  (no keys)");
+            } else {
+                for kv in kvs.iter() {
+                    println!(
+                        "  key={}, value={}",
+                        hex::encode(kv.key()),
+                        String::from_utf8_lossy(kv.value())
+                    );
+                }
+            }
+            Ok(())
         }
 
         "delkey" => {
