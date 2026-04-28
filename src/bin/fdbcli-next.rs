@@ -101,7 +101,7 @@ fn print_help() {
          - range <path...> (tuple)\n\
          - getallvalues [path...]     # get all key-value pairs in directory\n\
          - setkey (tuple) value                      # set key in current directory\n\
-         - setkey --subspace name (tuple) value      # set key in subspace\n\
+         - setkey --subspace name (tuple) value      # set key in existing subspace\n\
          - delkey <path...> (tuple)   # delete single key\n\
          \n\
          - help\n\
@@ -613,6 +613,7 @@ async fn execute_command(
         "setkey" => {
             if args.is_empty() {
                 println!("Usage: setkey [--subspace name] (tuple) value");
+                println!("Note: When using --subspace, the subspace must already exist (create with dircreate)");
                 return Ok(());
             }
 
@@ -621,6 +622,7 @@ async fn execute_command(
                 if args.len() < 2 {
                     println!("Error: --subspace requires a subspace name");
                     println!("Usage: setkey --subspace name (tuple) value");
+                    println!("Note: The subspace must already exist (create with dircreate)");
                     return Ok(());
                 }
                 (Some(args[1]), &args[2..])
@@ -654,24 +656,19 @@ async fn execute_command(
             // Execute the set operation
             let trx = db.create_trx()?;
 
-            // Create or open the directory
-            // When using --subspace, create the subspace if it doesn't exist
-            let dir = if subspace_name.is_some() {
-                match dir_create(&trx, &path).await {
-                    Ok(d) => d,
-                    Err(e) => {
-                        println!("Error creating/opening subspace '{}': {:?}", subspace_name.unwrap(), e);
-                        return Ok(());
-                    }
-                }
-            } else {
-                // For current directory, just open (don't create)
-                match dir_open(&trx, &path).await {
-                    Ok(d) => d,
-                    Err(e) => {
+            // Open the directory (don't create it - subspaces must already exist)
+            let dir = match dir_open(&trx, &path).await {
+                Ok(d) => d,
+                Err(e) => {
+                    if subspace_name.is_some() {
+                        println!("Error: Subspace '{}' does not exist in /{}. Create it first with: dircreate {}",
+                                 subspace_name.unwrap(),
+                                 current_dir.read().unwrap().join("/"),
+                                 subspace_name.unwrap());
+                    } else {
                         println!("Error opening directory /{}: {:?}", resolved.join("/"), e);
-                        return Ok(());
                     }
+                    return Ok(());
                 }
             };
 
