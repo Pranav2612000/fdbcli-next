@@ -14,7 +14,7 @@ use tokio::runtime::Handle;
 
 use fdbcli_next::{
     connect_db, dir_create, dir_list, dir_open, dir_remove, tuple_key_from_string,
-    tuple_pack_from_string, tuple_prefix_range, tuple_unpack_to_string,
+    tuple_pack_from_string, tuple_prefix_range, tuple_unpack_to_string, utils::readable_key,
 };
 
 use hex;
@@ -543,8 +543,8 @@ async fn execute_command(
                 for kv in kvs.iter() {
                     println!(
                         "  key={}, value={}",
-                        hex::encode(kv.key()),
-                        String::from_utf8_lossy(kv.value())
+                        readable_key(kv.key()),
+                        readable_key(kv.value())
                     );
                 }
             }

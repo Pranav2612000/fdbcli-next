@@ -3,6 +3,8 @@ use foundationdb::tuple::{pack, unpack};
 use foundationdb::{Database, FdbResult, RangeOption, Transaction};
 use std::env;
 
+pub mod utils;
+
 pub const ENV_DB_PATH: &str = "FDBCLI_DB_PATH";
 
 /// Connect to FDB using env var or default cluster file.
