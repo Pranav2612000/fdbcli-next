@@ -24,12 +24,9 @@ jobs:
         run: |
           wget https://github.com/apple/foundationdb/releases/download/7.3.43/foundationdb-clients_7.3.43-1_amd64.deb
           sudo dpkg -i foundationdb-clients_7.3.43-1_amd64.deb
-          
-      - name: Install toolchains
-        run: rustup target add x86_64-unknown-linux-musl
 
       - name: Build release binary
-        run: RUSTFLAGS="-C target-feature=+crt-static" cargo build --release --target x86_64-unknown-linux-musl --bin fdbcli-next
+        run: cargo build --release --bin fdbcli-next
 
       - name: Upload executable artifact
         uses: actions/upload-artifact@v4
