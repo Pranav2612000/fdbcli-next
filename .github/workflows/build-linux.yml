@@ -2,13 +2,15 @@ name: Build Linux Executable
 
 on:
   push:
-    branches:
-      - main
+    # Sequence of patterns matched against refs/tags
+    tags:
+    - 'v*' # Push events to matching v*, i.e. v1.0, v20.15.10
 
 jobs:
   build-linux:
     runs-on: ubuntu-latest
-
+    permissions:
+        contents: write
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -31,4 +33,13 @@ jobs:
         with:
           name: fdbcli-next-linux-x86_64
           path: target/release/fdbcli-next
+
           if-no-files-found: error
+
+      - name: Release
+        uses: softprops/action-gh-release@v1
+        with:
+          files: target/release/fdbcli-next
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
