@@ -1,5 +1,6 @@
 use clap::{Parser, Subcommand};
 use foundationdb::api::FdbApiBuilder;
+use foundationdb::options::StreamingMode;
 use foundationdb::{Database, FdbResult, RangeOption};
 use rustyline::completion::{Completer, Pair};
 use rustyline::error::ReadlineError;
@@ -99,6 +100,7 @@ fn print_help() {
          - clearprefix <path...> (tuple)\n\
          - range <path...> (tuple)\n\
          - getallvalues [path...]     # get all key-value pairs in directory\n\
+         - subspacelist [path...]     # list subspaces in directory\n\
          - setkey (tuple) value                      # set key in current directory\n\
          - setkey --subspace name (tuple) value      # set key in existing subspace\n\
          - delkey <path...> (tuple)   # delete single key\n\
@@ -684,7 +686,67 @@ async fn execute_command(
 
             Ok(())
         }
+        "subspacelist" => {
+            let resolved = resolve_path(&current_dir.read().unwrap(), args);
+            let path: Vec<&str> = resolved.iter().map(|s| s.as_str()).collect();
 
+            let trx = db.create_trx()?;
+            let dir = match dir_open(&trx, &path).await {
+                Ok(d) => d,
+                Err(e) => {
+                    println!("Error opening dir /{}: {:?}", resolved.join("/"), e);
+                    return Ok(());
+                }
+            };
+
+            // Get the full range for this directory
+            let (begin, end) = dir.range().expect("dir.range()");
+            let mut range = RangeOption::from((begin.as_slice(), end.as_slice()));
+            range.mode = StreamingMode::WantAll;
+            let kvs = trx.get_range(&range, 10_000, true).await?;
+
+            let mut subspaces = std::collections::HashSet::new();
+
+            // Extract subspace names from keys
+            for kv in kvs.iter() {
+                let key = kv.key();
+
+                // Strip the directory begin prefix
+                if key.len() <= begin.len() {
+                    continue;
+                }
+                let remaining = &key[begin.len() - 1..];
+
+                // Look for the pattern: \x02<subspace_name>\x00
+                // The subspace name starts after \x02
+                if remaining.is_empty() || remaining[0] != 0x02 {
+                    continue;
+                }
+
+                // Find the first \x00 after \x02
+                if let Some(null_pos) = remaining[1..].iter().position(|&b| b == 0x00) {
+                    let subspace_name = String::from_utf8_lossy(&remaining[1..1 + null_pos]);
+                    subspaces.insert(subspace_name.to_string());
+                }
+            }
+
+            if resolved.is_empty() {
+                println!("Subspaces in /:");
+            } else {
+                println!("Subspaces in /{}:", resolved.join("/"));
+            }
+
+            if subspaces.is_empty() {
+                println!("  (none)");
+            } else {
+                let mut sorted: Vec<_> = subspaces.into_iter().collect();
+                sorted.sort();
+                for name in sorted {
+                    println!("  {}", name);
+                }
+            }
+            Ok(())
+        }
         other => {
             println!("Unknown command: {}. Type 'help' for list.", other);
             Ok(())
