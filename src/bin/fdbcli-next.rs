@@ -708,7 +708,7 @@ async fn execute_command(
                 *current_subspace.write().unwrap() = subspace_name.to_string();
                 Ok(())
             } else {
-                println!("Error: subspace name expected");
+                *current_subspace.write().unwrap() = String::new();
                 Ok(())
             }
         }
