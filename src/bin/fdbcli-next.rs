@@ -101,6 +101,7 @@ fn print_help() {
          - range <path...> (tuple)\n\
          - getallvalues [path...]     # get all key-value pairs in directory\n\
          - subspacelist [path...]     # list subspaces in directory\n\
+         - subspaceset <subspacename> # Set a current subspace to use\n\
          - setkey (tuple) value                      # set key in current directory\n\
          - setkey --subspace name (tuple) value      # set key in existing subspace\n\
          - delkey <path...> (tuple)   # delete single key\n\
@@ -201,6 +202,7 @@ async fn execute_command(
     cmd: &str,
     args: &[&str],
     current_dir: &Arc<RwLock<Vec<String>>>,
+    current_subspace: &Arc<RwLock<String>>,
 ) -> FdbResult<()> {
     match cmd {
         // ------------- Directory navigation -------------
@@ -517,6 +519,7 @@ async fn execute_command(
 
         "getallvalues" => {
             let resolved = resolve_path(&current_dir.read().unwrap(), args);
+            let current_subspace = current_subspace.read().unwrap();
             let path: Vec<&str> = resolved.iter().map(|s| s.as_str()).collect();
 
             let trx = db.create_trx()?;
@@ -527,9 +530,21 @@ async fn execute_command(
                     return Ok(());
                 }
             };
+            let subspace = if current_subspace.is_empty() {
+                None
+            } else {
+                let subspace = dir
+                    .subspace(&current_subspace.as_str())
+                    .expect("invalid subspace");
+                Some(subspace)
+            };
 
             // Get the full range for this directory
-            let (begin, end) = dir.range().expect("dir.range()");
+            let (begin, end) = if let Some(subspace) = &subspace {
+                subspace.range()
+            } else {
+                dir.range().expect("dir.range()")
+            };
             let range = RangeOption::from((begin.as_slice(), end.as_slice()));
             let kvs = trx.get_range(&range, 10_000, false).await?;
 
@@ -543,11 +558,13 @@ async fn execute_command(
                 println!("  (no keys)");
             } else {
                 for kv in kvs.iter() {
-                    println!(
-                        "  key={}, value={}",
-                        readable_key(kv.key()),
-                        readable_key(kv.value())
-                    );
+                    let key = if let Some(subspace) = &subspace {
+                        subspace.unpack(kv.key()).expect("unpack should succeed")
+                    } else {
+                        readable_key(kv.key())
+                    };
+                    let value = readable_key(kv.value());
+                    println!("  key={}, value={}", key, value);
                 }
             }
             Ok(())
@@ -685,6 +702,15 @@ async fn execute_command(
             }
 
             Ok(())
+        }
+        "subspaceset" => {
+            if let Some(subspace_name) = args.first() {
+                *current_subspace.write().unwrap() = subspace_name.to_string();
+                Ok(())
+            } else {
+                println!("Error: subspace name expected");
+                Ok(())
+            }
         }
         "subspacelist" => {
             let resolved = resolve_path(&current_dir.read().unwrap(), args);
@@ -908,6 +934,7 @@ impl<'a> Validator for FdbDirectoryCompleter<'a> {}
 async fn cmd_repl(db: &Database) -> FdbResult<()> {
     // Track current directory (shared with completer)
     let current_dir = Arc::new(RwLock::new(Vec::<String>::new()));
+    let current_subspace = Arc::new(RwLock::new(String::new()));
 
     // Create tab completion helper
     let completer = FdbDirectoryCompleter::new(db, current_dir.clone());
@@ -952,6 +979,14 @@ async fn cmd_repl(db: &Database) -> FdbResult<()> {
                 format!("fdbcli-next /{}> ", current.join("/"))
             }
         };
+        let prompt = {
+            let current_subspace = current_subspace.read().unwrap();
+            if !current_subspace.is_empty() {
+                format!("{} ({})", prompt, current_subspace)
+            } else {
+                prompt
+            }
+        };
 
         // Read line with rustyline (provides history, editing, etc.)
         let readline = rl.readline(&prompt);
@@ -990,7 +1025,7 @@ async fn cmd_repl(db: &Database) -> FdbResult<()> {
                 let cmd = parts[0];
                 let args = &parts[1..];
 
-                let result = execute_command(db, cmd, args, &current_dir).await;
+                let result = execute_command(db, cmd, args, &current_dir, &current_subspace).await;
 
                 if let Err(e) = result {
                     eprintln!("Error: {:?}", e);
@@ -1028,6 +1063,7 @@ async fn cmd_repl_basic(db: &Database) -> FdbResult<()> {
 
     // Track current directory (no completer, but still use Arc<RwLock> for execute_command compatibility)
     let current_dir = Arc::new(RwLock::new(Vec::<String>::new()));
+    let current_subspace = Arc::new(RwLock::new(String::new()));
 
     loop {
         // Build prompt showing current directory
@@ -1037,6 +1073,14 @@ async fn cmd_repl_basic(db: &Database) -> FdbResult<()> {
                 "fdbcli-next /> ".to_string()
             } else {
                 format!("fdbcli-next /{}> ", current.join("/"))
+            }
+        };
+        let prompt = {
+            let current_subspace = current_subspace.read().unwrap();
+            if !current_subspace.is_empty() {
+                format!("{} ({})", prompt, current_subspace)
+            } else {
+                prompt
             }
         };
 
@@ -1071,7 +1115,7 @@ async fn cmd_repl_basic(db: &Database) -> FdbResult<()> {
         let cmd = parts[0];
         let args = &parts[1..];
 
-        let result = execute_command(db, cmd, args, &current_dir).await;
+        let result = execute_command(db, cmd, args, &current_dir, &current_subspace).await;
 
         if let Err(e) = result {
             eprintln!("Error: {:?}", e);
