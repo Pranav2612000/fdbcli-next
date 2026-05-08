@@ -249,7 +249,7 @@ dependencies = [
 
 [[package]]
 name = "fdbcli-next"
-version = "0.0.1"
+version = "0.1.9"
 dependencies = [
  "clap",
  "foundationdb",
