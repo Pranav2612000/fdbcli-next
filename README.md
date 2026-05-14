@@ -10,6 +10,10 @@ This project is powered by the official FoundationDB Rust bindings:
 foundationdb = { version = "0.10.0", features = ["embedded-fdb-include", "fdb-7_3"] }
 ```
 
+### Installation
+```CMD
+curl -ssL https://raw.githubusercontent.com/Pranav2612000/fdbcli-next/refs/heads/feat/main/install.sh | bash
+```
 
 `fdbcli-next` is a powerful **FoundationDB Directory/Tuple explorer**, providing:
 
