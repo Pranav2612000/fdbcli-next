@@ -12,7 +12,7 @@ foundationdb = { version = "0.10.0", features = ["embedded-fdb-include", "fdb-7_
 
 ### Installation
 ```CMD
-curl -ssL https://raw.githubusercontent.com/Pranav2612000/fdbcli-next/refs/heads/feat/main/install.sh | bash
+curl -ssL https://raw.githubusercontent.com/Pranav2612000/fdbcli-next/refs/heads/main/install.sh | bash
 ```
 
 `fdbcli-next` is a powerful **FoundationDB Directory/Tuple explorer**, providing:
